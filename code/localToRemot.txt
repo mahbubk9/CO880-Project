@@ -1,4 +1,4 @@
-scp test.py mk788@raptor.kent.ac.uk:/cluster/home/arc/mk788/mycode
+scp test.py mk788@kestrel.kent.ac.uk:/cluster/home/arc/mk788/mycode
 
 /home/arc/mk788/.local/lib/python3.8/site-packages/numpy
 /home/arc/mk788/.local/lib/python3.8/site-packages/atari_py/atari_roms
@@ -12,3 +12,13 @@ mahbub@mahbub-HP-Pavilion-Laptop-15-cs0xxx:~/Desktop/Project/code/CO880-Project/
 
 myenv link
 /cluster/home/arc/mk788/myEnv/lib/python3.6/site-packages/numpy
+
+ssh -L 16006:127.0.0.1:6006 mahbub@0C:96:E6:AD:ED:4B
+Here is what I do to avoid the issues of making the remote server accept your local external IP:
+
+when I ssh into the machine, I use the option -L to transfer the port 6006 of the remote server into the port 16006 of my machine (for instance): 
+ssh -L 16006:127.0.0.1:6006 olivier@my_server_ip
+What it does is that everything on the port 6006 of the server (in 127.0.0.1:6006) will be forwarded to my machine on the port 16006.
+
+You can then launch tensorboard on the remote machine using a standard tensorboard --logdir log with the default 6006port
+On your local machine, go to http://127.0.0.1:16006 and enjoy your remote TensorBoard.

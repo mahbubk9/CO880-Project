@@ -20,8 +20,7 @@ class DQN(nn.Module):
         conv_out_size = self._get_conv_out(input_shape)
         self.fc = nn.Sequential(
             nn.Linear(conv_out_size, 512),
-            nn.LSTM(conv_out_size, 512),# batch_first=True),
-           # nn.ReLU(),
+            nn.GRU(conv_out_size, 512,BATCH_SIZE=True),
             nn.Linear(512, n_actions)
         )
 
@@ -30,5 +29,5 @@ class DQN(nn.Module):
         return int(np.prod(o.size()))
 
     def forward(self, x):
-        conv_out = self.conv(x).view(x.size()[0], -1)
+        conv_out = self.conv(x).view(x.size()[0], -1,x.size)
         return self.fc(conv_out)
