@@ -1,171 +1,146 @@
-import wrapper
-import dqnModel
-
-import argparse
-import time
+#IMPORTS
+import gym 
+import random
 import numpy as np
-import collections
+from collections import deque
+import tensorflow as tf
+from tensorflow.keras import layers
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, TimeDistributed, Flatten, LSTM
+from tensorflow.keras.optimizers import RMSprop
+import datetime
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
+#SET SEED
+np.random.seed(168)
+tf.random.set_seed(168)
 
-from torch.utils.tensorboard import SummaryWriter
-
-
-DEFAULT_ENV_NAME = "PongNoFrameskip-v4"
-MEAN_REWARD_BOUND = 19.5
-
-GAMMA = 0.99
-BATCH_SIZE = 32
-REPLAY_SIZE = 10000
-LEARNING_RATE = 1e-4
-SYNC_TARGET_FRAMES = 1000
-REPLAY_START_SIZE = 10000
-
-EPSILON_DECAY_LAST_FRAME = 10**5
-EPSILON_START = 1.0
-EPSILON_FINAL = 0.02
+#DQN 
+class DQN():
 
 
-Experience = collections.namedtuple('Experience', field_names=['state', 'action', 'reward', 'done', 'new_state'])
-
-
-class ExperienceBuffer:
-    def __init__(self, capacity):
-        self.buffer = collections.deque(maxlen=capacity)
-
-    def __len__(self):
-        return len(self.buffer)
-
-    def append(self, experience):
-        self.buffer.append(experience)
-
-    def sample(self, batch_size):
-        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
-        states, actions, rewards, dones, next_states = zip(*[self.buffer[idx] for idx in indices])
-        return np.array(states), np.array(actions), np.array(rewards, dtype=np.float32), \
-               np.array(dones, dtype=np.uint8), np.array(next_states)
-
-
-class Agent:
-    def __init__(self, env, exp_buffer):
+ def __init__(self, env, batch_size=64, max_experiences=5000):
         self.env = env
-        self.exp_buffer = exp_buffer
-        self._reset()
+        self.input_size = self.env.observation_space.shape[0]
+        self.action_size = self.env.action_space.n
+        self.max_experiences = max_experiences
+        self.memory = deque(maxlen=self.max_experiences)
+        self.batch_size = batch_size
+        self.gamma = 1.0
+        self.epsilon = 1.0
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.995
+        
+        self.model = self.build_model()
+        self.target_model = self.build_model()
+                
+ def build_model(self):
+        model = Sequential()
+        model.add(layers.Conv2D( 32, (4,4), activation='relu', padding='valid', input_shape=(IMG_SIZE, IMG_SIZE, 1)))
+        model.add(layers.Conv2D(32, 64, (2,2), activation='relu', padding='valid'))
+        model.add(layers.Conv2D(64, 64, (1,1), activation='relu', padding='valid'))
+        model.add(layers.Flatten())
+        model.add(layers.Dense(512, activation='relu'))
+        model.add(layers.Dense(self.action_size))
+        model.compile(loss='mse', optimizer=RMSprop(lr=0.00025, epsilon=self.epsilon_min), metrics=['accuracy'])
 
-    def _reset(self):
-        self.state = env.reset()
-        self.total_reward = 0.0
-
-    def play_step(self, net, epsilon=0.0, device="cpu"):
-        done_reward = None
-
-        if np.random.random() < epsilon:
-            action = env.action_space.sample()
+        return model
+            
+ def get_action(self, state):
+        if np.random.random() <= self.epsilon:
+            return self.env.action_space.sample()
         else:
-            state_a = np.array([self.state], copy=False)
-            state_v = torch.tensor(state_a).to(device)
-            q_vals_v = net(state_v)
-            _, act_v = torch.max(q_vals_v, dim=1)
-            action = int(act_v.item())
+            return np.argmax(self.model.predict(tf.expand_dims(state, 0)))
 
-        # do step in the environment
-        new_state, reward, is_done, _ = self.env.step(action)
-        self.total_reward += reward
+ def add_experience(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+        self.update_epsilon()
 
-        exp = Experience(self.state, action, reward, is_done, new_state)
-        self.exp_buffer.append(exp)
-        self.state = new_state
-        if is_done:
-            done_reward = self.total_reward
-            self._reset()
-        return done_reward
+ def replay(self, episode):
+        x_batch, y_batch = [], []
+        minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
+        
+        for state, action, reward, next_state, done in minibatch:
+            y_target = self.target_model.predict(tf.expand_dims(state, 0))
+            y_target[0][action] = reward if done else reward + self.gamma * np.max(self.model.predict(tf.expand_dims(next_state, 0))[0])
+            x_batch.append(state)
+            y_batch.append(y_target[0])
+
+        self.model.fit(np.array(x_batch), np.array(y_batch), batch_size=len(x_batch), verbose=0)  
+
+ def update_epsilon(self):
+        self.epsilon = max(self.epsilon_min, self.epsilon_decay * self.epsilon)
+   
+#ENV INITIALISATION AND PREPROCEESSING STATE
+def initialize_env(env):
+  initial_state = env.reset()#
+  initial_done_flag = False
+  initial_rewards = 0
+  return initial_state, initial_done_flag, initial_rewards  
 
 
-def calc_loss(batch, net, tgt_net, device="cpu"):
-    states, actions, rewards, dones, next_states = batch
+def preprocess_state(image, img_size):
+    img_temp = image[31:195]
+    img_temp = tf.image.rgb_to_grayscale(img_temp)
+    img_temp = tf.image.resize(img_temp, [img_size, img_size],
+                               method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    img_temp = tf.cast(img_temp, tf.float32)
+    return img_temp        
 
-    states_v = torch.tensor(states).to(device)
-    next_states_v = torch.tensor(next_states).to(device)
-    actions_v = torch.tensor(actions).to(device)
-    rewards_v = torch.tensor(rewards).to(device)
-    done_mask = torch.ByteTensor(dones).to(device)
+#def combine_images(new_img, prev_img, img_size, seq=4):
+    if len(prev_img.shape) == 4 and prev_img.shape[0] == seq:
+        im = np.concatenate((prev_img[1:, :, :], tf.reshape(new_img, [1, img_size, img_size, 1])), axis=0)
+    else:
+        im = np.stack([new_img] * seq, axis=0)
+    return im
 
-    state_action_values = net(states_v).gather(1, actions_v.unsqueeze(-1)).squeeze(-1)
-    next_state_values = tgt_net(next_states_v).max(1)[0]
-    next_state_values[done_mask] = 0.0
-    next_state_values = next_state_values.detach()
+#GAME PLAY
+def play_game(agent, state, done, rewards):    
+    while not done:
+        action = agent.get_action(state)
+        next_state, reward, done, _ = env.step(action)
 
-    expected_state_action_values = next_state_values * GAMMA + rewards_v
-    return nn.MSELoss()(state_action_values, expected_state_action_values)
+        next_state = preprocess_state(next_state, IMG_SIZE)
+        
+        agent.add_experience(state, action, reward, next_state, done)
 
+        state = next_state
+        rewards += reward   
+    return rewards
+
+
+#TRAINING METHOD
+def train_agent(env, episodes, agent):
+  from collections import deque
+  
+  scores = deque(maxlen=100)
+
+  for episode in range(episodes):
+    state, done, rewards = initialize_env(env) 
+    state = preprocess_state(state, IMG_SIZE)
+
+    rewards = play_game(agent, state, done, rewards)
+    scores.append(rewards)
+    mean_score = np.mean(scores)
+
+    if episode % 50 == 0:
+        print(f'[Episode {episode}] - Average Score: {mean_score}')
+        agent.target_model.set_weights(agent.model.get_weights())
+        agent.target_model.save_weights(f'dqn/dqn_model_weights_{episode}')
+
+    agent.replay(episode)
+
+  print(f"Average Score: {np.mean(scores)}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--cuda", default=False, action="store_true", help="Enable cuda")
-    parser.add_argument("--env", default=DEFAULT_ENV_NAME,
-                        help="Name of the environment, default=" + DEFAULT_ENV_NAME)
-    parser.add_argument("--reward", type=float, default=MEAN_REWARD_BOUND,
-                        help="Mean reward boundary for stop of training, default=%.2f" % MEAN_REWARD_BOUND)
-    args = parser.parse_args()
-    device = torch.device("cuda" if args.cuda else "cpu")
+  env = gym.make('PongNoFrameskip-v4')
+  print(env.observation_space.shape)
+  IMG_SIZE = 84
+  SEQUENCE = 4
+  agent = DQN(env)
+  print(agent)
+  #episodes = 100
+  #train_agent(env, episodes, agent)
+  
 
-    env = wrapper.make_env(args.env)
 
-    net = dqnModel.DQN(env.observation_space.shape, env.action_space.n).to(device)
-    tgt_net = dqnModel.DQN(env.observation_space.shape, env.action_space.n).to(device)
-    writer = SummaryWriter(comment="-" + args.env)
-    print(net)
 
-    buffer = ExperienceBuffer(REPLAY_SIZE)
-    agent = Agent(env, buffer)
-    epsilon = EPSILON_START
-
-    optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
-    total_rewards = []
-    frame_idx = 0
-    ts_frame = 0
-    ts = time.time()
-    best_mean_reward = None
-
-    while True:
-        frame_idx += 1
-        epsilon = max(EPSILON_FINAL, EPSILON_START - frame_idx / EPSILON_DECAY_LAST_FRAME)
-
-        reward = agent.play_step(net, epsilon, device=device)
-        if reward is not None:
-            total_rewards.append(reward)
-            speed = (frame_idx - ts_frame) / (time.time() - ts)
-            ts_frame = frame_idx
-            ts = time.time()
-            mean_reward = np.mean(total_rewards[-100:])
-            print("%d: done %d games, mean reward %.3f, eps %.2f, speed %.2f f/s" % (
-                frame_idx, len(total_rewards), mean_reward, epsilon,
-                speed
-            ))
-            writer.add_scalar("epsilon", epsilon, frame_idx)
-            writer.add_scalar("speed", speed, frame_idx)
-            writer.add_scalar("reward_100", mean_reward, frame_idx)
-            writer.add_scalar("reward", reward, frame_idx)
-            if best_mean_reward is None or best_mean_reward < mean_reward:
-                torch.save(net.state_dict(), args.env + "-best.dat")
-                if best_mean_reward is not None:
-                    print("Best mean reward updated %.3f -> %.3f, model saved" % (best_mean_reward, mean_reward))
-                best_mean_reward = mean_reward
-            if mean_reward > args.reward:
-                print("Solved in %d frames!" % frame_idx)
-                break
-
-        if len(buffer) < REPLAY_START_SIZE:
-            continue
-
-        if frame_idx % SYNC_TARGET_FRAMES == 0:
-            tgt_net.load_state_dict(net.state_dict())
-
-        optimizer.zero_grad()
-        batch = buffer.sample(BATCH_SIZE)
-        loss_t = calc_loss(batch, net, tgt_net, device=device)
-        loss_t.backward()
-        optimizer.step()
-    writer.close()

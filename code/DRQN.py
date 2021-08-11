@@ -109,7 +109,7 @@ def play_game(agent, state, done, rewards):
 #TRAINING METHOD
 def train_agent(env, episodes, agent):
   from collections import deque
-  import numpy as np
+  
 
   scores = deque(maxlen=100)
 
@@ -137,8 +137,8 @@ if __name__ == "__main__":
   IMG_SIZE = 84
   SEQUENCE = 4
   agent = DRQN(env)
-  agent.input_size
-  agent.action_size
+  print(agent.input_size)
+  print(agent.action_size)
   episodes = 200
   train_agent(env, episodes, agent)  
 

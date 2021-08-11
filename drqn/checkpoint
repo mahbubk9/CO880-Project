@@ -1,0 +1,2 @@
+model_checkpoint_path: "drqn_model_weights_0"
+all_model_checkpoint_paths: "drqn_model_weights_0"
