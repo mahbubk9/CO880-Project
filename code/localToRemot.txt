@@ -22,3 +22,6 @@ What it does is that everything on the port 6006 of the server (in 127.0.0.1:600
 
 You can then launch tensorboard on the remote machine using a standard tensorboard --logdir log with the default 6006port
 On your local machine, go to http://127.0.0.1:16006 and enjoy your remote TensorBoard.
+
+
+\\Users\\Mahbub\\AppData\\local\\Python\\Python38\\site-packages\
